@@ -375,10 +375,27 @@ class BeoPlay(MediaPlayerEntity):
     def group_members(self):
         """Return the group members."""
         entities = self.hass.data[DATA_BEOPLAY].entities
-        listeners = (
+        listener_jids = self.listener_jids
+        return [entity.entity_id for entity in entities if entity.jid in listener_jids]
+
+    @property
+    def listener_jids(self):
+        """Return normalized JIDs for current listeners."""
+        raw_listeners = (
             self._speaker.listeners if hasattr(self._speaker, "listeners") else []
         )
-        return [entity.entity_id for entity in entities if entity.jid in listeners]
+        if not raw_listeners:
+            return set()
+
+        listeners = set()
+        for listener in raw_listeners:
+            if isinstance(listener, dict):
+                jid = listener.get("jid")
+                if jid:
+                    listeners.add(jid)
+            elif isinstance(listener, str):
+                listeners.add(listener)
+        return listeners
 
     @property
     def should_poll(self):
@@ -495,7 +512,54 @@ class BeoPlay(MediaPlayerEntity):
         attributes = {}
         attributes["stand_positions"] = self._speaker.standPositions
         attributes["stand_position"] = self._speaker.standPosition
+        primary_entity = self._find_primary_experience_entity()
+        is_listener = primary_entity is not None or self._is_borrowing_source()
+        attributes["is_primary_experience"] = not is_listener
+        attributes["is_listener"] = is_listener
+        if primary_entity is not None:
+            attributes["primary_experience_speaker"] = primary_entity.entity_id
+        elif not is_listener:
+            attributes["primary_experience_speaker"] = self.entity_id
+        else:
+            attributes["primary_experience_speaker"] = None
         return attributes
+
+    def _find_primary_experience_entity(self):
+        """Return the entity that acts as primary experience for this speaker."""
+        if self.hass is None or DATA_BEOPLAY not in self.hass.data:
+            return None
+
+        for entity in self.hass.data[DATA_BEOPLAY].entities:
+            if entity is self:
+                continue
+            if not getattr(entity, "jid", None):
+                continue
+            if self.jid and self.jid in entity.listener_jids:
+                return entity
+        return None
+
+    def _is_borrowing_source(self):
+        """Determine if the current source is borrowed from another speaker."""
+        if not hasattr(self._speaker, "sources") or not hasattr(
+            self._speaker, "sourcesBorrowed"
+        ):
+            return False
+
+        current_source = self.source
+        if not current_source:
+            return False
+
+        try:
+            index = self._speaker.sources.index(current_source)
+        except (ValueError, AttributeError):
+            return False
+
+        try:
+            borrowed = self._speaker.sourcesBorrowed[index]
+        except (IndexError, AttributeError):
+            return False
+
+        return bool(borrowed)
 
     # ========== Service Calls ==========
 
