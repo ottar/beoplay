@@ -495,7 +495,46 @@ class BeoPlay(MediaPlayerEntity):
         attributes = {}
         attributes["stand_positions"] = self._speaker.standPositions
         attributes["stand_position"] = self._speaker.standPosition
+       
+        # --- New: grouping / role attributes ---
+        if not self._on:
+            attributes["primary_jid"] = None
+            attributes["listeners"] = []
+            attributes["role"] = None
+            attributes["is_primary_experience"] = False
+            attributes["is_listener"] = False
+            attributes["primary_experience_speaker"] = None
+            return attributes
+            
+        attributes["primary_jid"] = getattr(self._speaker, "primary_jid", None)
+        attributes["listeners"] = getattr(self._speaker, "listeners", [])
+        attributes["role"] = getattr(self._speaker, "role", None)
+
+        if self._speaker.role == "primary":
+            attributes["is_primary_experience"] = True
+            attributes["is_listener"] = False
+            attributes["primary_experience_speaker"] = self.entity_id
+        elif self._speaker.role == "listener":
+            attributes["is_primary_experience"] = False
+            attributes["is_listener"] = True
+            primary_entity = self._find_entity_by_jid(self._speaker.primary_jid)
+            attributes["primary_experience_speaker"] = (
+                primary_entity.entity_id if primary_entity else None
+            )
+        else:
+            attributes["is_primary_experience"] = False
+            attributes["is_listener"] = False
+            attributes["primary_experience_speaker"] = None
         return attributes
+
+    def _find_entity_by_jid(self, jid):
+        """Find a BeoPlay entity by its JID."""
+        if not jid or DATA_BEOPLAY not in self.hass.data:
+            return None
+        for entity in self.hass.data[DATA_BEOPLAY].entities:
+            if getattr(entity, "jid", None) == jid:
+                return entity
+        return None
 
     # ========== Service Calls ==========
 
