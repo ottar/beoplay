@@ -495,6 +495,7 @@ class BeoPlay(MediaPlayerEntity):
         attributes = {}
         attributes["stand_positions"] = self._speaker.standPositions
         attributes["stand_position"] = self._speaker.standPosition
+        attributes["jid"] = self._jid
        
         # --- New: grouping / role attributes ---
         if not self._on:
