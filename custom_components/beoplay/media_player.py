@@ -88,7 +88,17 @@ DATA_BEOPLAY = "beoplay_media_player"
 BEOPLAY_EXPERIENCE_JOIN_SERVICE = "beoplay_join_experience"
 BEOPLAY_EXPERIENCE_LEAVE_SERVICE = "beoplay_leave_experience"
 BEOPLAY_ADD_MEDIA_SERVICE = "beoplay_add_media_to_queue"
+BEOPLAY_PLAY_RADIO_STATION = "play_radio_station"
 BEOPLAY_SET_STAND_POSITION = "beoplay_set_stand_position"
+
+PLAY_RADIO_SCHEMA = vol.Schema(
+    {
+        vol.Required(ATTR_ENTITY_ID): cv.entity_ids,
+        vol.Required("content_id"): cv.string,
+    }
+)
+
+
 
 EXPERIENCE_SCHEMA = vol.Schema(
     {
@@ -163,6 +173,18 @@ async def _add_player(
             entities = [e for e in entities if e.entity_id in entity_ids]
         for entity in entities:
             await entity.async_add_media(url)
+            
+    async def play_radio_station(service: ServiceCall) -> ServiceResponse:
+        """Start specific B&O radio station."""
+        _LOGGER.debug("Play Radio Station service called")
+        entity_ids = service.data.get("entity_id")
+        content_id = service.data.get("content_id")
+        entities = hass.data[DATA_BEOPLAY].entities
+
+        if entity_ids:
+            entities = [e for e in entities if e.entity_id in entity_ids]
+        for entity in entities:
+            await entity.async_play_radio_station(content_id)
 
     async def set_stand_positions(service: ServiceCall) -> ServiceResponse:
         """Join to an existing experience."""
@@ -214,6 +236,13 @@ async def _add_player(
         schema=SET_STAND_POSITION_SCHEMA,
     )
 
+    hass.services.async_register(
+        DOMAIN,
+        BEOPLAY_PLAY_RADIO_STATION,
+        play_radio_station,
+        schema=PLAY_RADIO_SCHEMA,
+    )
+    
     hass.bus.async_listen_once(EVENT_HOMEASSISTANT_STOP, _stop_polling)
 
     speaker = BeoPlay(hass, api, type)
@@ -646,6 +675,26 @@ class BeoPlay(MediaPlayerEntity):
     async def async_set_stand_position(self, id):
         """Set the stand position."""
         await self._speaker.async_set_stand_position(id)
+
+    async def async_play_radio_station(self, content_id: str):
+        """Start a specific B&O Radio station by content_id."""
+        source_id = (
+            f"beoradio:{self._speaker.typeNumber}."
+            f"{self._speaker.itemNumber}."
+            f"{self._speaker.serialNumber}@products.bang-olufsen.com"
+        )
+        payload = {
+            "primaryExperience": {
+                "source": {"id": source_id}
+            },
+            "contentId": content_id,
+        }
+    
+        _LOGGER.debug("[%s] Starting B&O Radio station: %s", self._name, content_id)
+        result = await self._speaker.async_postReq("POST", "BeoZone/Zone/ActiveSources", payload)
+        _LOGGER.debug("[%s] POST response: %s", self._name, result)
+
+
 
     @Throttle(MIN_TIME_BETWEEN_UPDATES)
     async def async_update(self):
