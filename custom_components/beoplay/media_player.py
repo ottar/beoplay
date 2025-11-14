@@ -525,38 +525,61 @@ class BeoPlay(MediaPlayerEntity):
         attributes["stand_positions"] = self._speaker.standPositions
         attributes["stand_position"] = self._speaker.standPosition
         attributes["jid"] = self._jid
-       
+    
         # --- New: grouping / role attributes ---
         if not self._on:
             attributes["primary_jid"] = None
             attributes["listeners"] = []
+            attributes["listeners_jid"] = []
             attributes["role"] = None
             attributes["is_primary_experience"] = False
             attributes["is_listener"] = False
             attributes["primary_experience_speaker"] = None
             return attributes
-            
-        attributes["primary_jid"] = getattr(self._speaker, "primary_jid", None)
-        attributes["listeners"] = getattr(self._speaker, "listeners", [])
+    
+        # Primary JID
+        primary_jid = getattr(self._speaker, "primary_jid", None)
+        attributes["primary_jid"] = primary_jid
+    
+        # Listeners — convert JID → entity_id
+        raw_listeners = getattr(self._speaker, "listeners", [])
+        entity_listeners = []
+    
+        for jid in raw_listeners:
+            ent = self._find_entity_by_jid(jid)
+            if ent:
+                entity_listeners.append(ent.entity_id)
+            else:
+                entity_listeners.append(None)
+    
+        attributes["listeners"] = entity_listeners
+        attributes["listeners_jid"] = raw_listeners
+    
+        # Role
         attributes["role"] = getattr(self._speaker, "role", None)
-
+    
+        # Primary / listener logic
         if self._speaker.role == "primary":
             attributes["is_primary_experience"] = True
             attributes["is_listener"] = False
             attributes["primary_experience_speaker"] = self.entity_id
+    
         elif self._speaker.role == "listener":
             attributes["is_primary_experience"] = False
             attributes["is_listener"] = True
-            primary_entity = self._find_entity_by_jid(self._speaker.primary_jid)
+            primary_entity = self._find_entity_by_jid(primary_jid)
             attributes["primary_experience_speaker"] = (
                 primary_entity.entity_id if primary_entity else None
             )
+    
         else:
             attributes["is_primary_experience"] = False
             attributes["is_listener"] = False
             attributes["primary_experience_speaker"] = None
+    
         return attributes
-
+    
+    
     def _find_entity_by_jid(self, jid):
         """Find a BeoPlay entity by its JID."""
         if not jid or DATA_BEOPLAY not in self.hass.data:
@@ -565,6 +588,7 @@ class BeoPlay(MediaPlayerEntity):
             if getattr(entity, "jid", None) == jid:
                 return entity
         return None
+
 
     # ========== Service Calls ==========
 
