@@ -304,6 +304,8 @@ class BeoPlay(MediaPlayerEntity):
         self._state = self._speaker.state
         self._beoplay_type = type
 
+        self._active_source_id = None
+
     async def async_added_to_hass(self):
         """Register entity."""
         self.hass.data[DATA_BEOPLAY].entities.append(self)
@@ -350,11 +352,25 @@ class BeoPlay(MediaPlayerEntity):
         def notif_callback(data: dict):
             self._on = self._speaker.on
             self._state = self._speaker.state
+            # --- NY BLOKK START ---
+            # Vi prøver å hente ut den nøyaktige kilde-IDen som høyttaleren rapporterer
+            # Dette formatet (f.eks "tidal:1234...") er nøyaktig det slaven trenger for å joine.
+            try:
+                # Sjekk ulike steder i JSON-strukturen der IDen kan ligge (basert på loggene dine)
+                if "data" in data and "primary" in data["data"]:
+                     self._active_source_id = data["data"]["primary"]
+                elif "data" in data and "primaryExperience" in data["data"]:
+                     self._active_source_id = data["data"]["primaryExperience"]["source"]["id"]
+            except Exception:
+                pass # Ikke krasj hvis dataen mangler
+            # --- NY BLOKK SLUTT ---
             self.async_schedule_update_ha_state()
             # add the entity ID of the speaker to the notification so we know
             # where it's coming from
             data["entity_id"] = self.entity_id
             self._hass.add_job(self._notify_beoplay_notification, data)
+
+        
 
         try:
             await self._speaker.async_notificationsTask(notif_callback)
@@ -658,13 +674,46 @@ class BeoPlay(MediaPlayerEntity):
         """Join on ongoing experience."""
         await self._speaker.async_join_experience()
 
-    def join_players(self, group_members):
-        """Join `group_members` as a player group with the current player."""
-        entities = self.hass.data[DATA_BEOPLAY].entities
+    async def async_join_players(self, group_members):
+        """
+        Joiner andre høyttalere til denne (Master) ved å sende Masterens Source ID.
+        Dette gjør at standard 'Group'-knapper i HA fungerer.
+        """
+        _LOGGER.debug("[%s] async_join_players kalt med medlemmer: %s", self._name, group_members)
 
-        entities = [e for e in entities if e.entity_id in group_members]
-        for entity in entities:
-            entity.join_experience()
+        # 1. Hent IDen vi har fanget opp fra varslene
+        master_source_id = self._active_source_id
+
+        # Fallback hvis vi nettopp har restartet og ikke mottatt varsel enda
+        if not master_source_id:
+             # Vi gjetter på 'music:' + JID hvis vi mangler data. Bedre enn ingenting.
+             master_source_id = f"music:{self._jid}" 
+             _LOGGER.warning("[%s] Mangler aktiv kilde-ID, prøver fallback: %s", self._name, master_source_id)
+
+        # 2. Finn slave-objektene
+        entities = self.hass.data[DATA_BEOPLAY].entities
+        slaves = [e for e in entities if e.entity_id in group_members]
+
+        # 3. Send kommando til hver slave
+        for slave in slaves:
+            if slave.entity_id == self.entity_id:
+                continue # Hopp over seg selv
+            
+            _LOGGER.debug("Ber slave %s om å joine source: %s", slave.name, master_source_id)
+            
+            payload = {
+                "primaryExperience": {
+                    "source": {
+                        "id": master_source_id
+                    }
+                }
+            }
+            
+            try:
+                # Vi bruker ActiveSources direkte mot slaven
+                await slave._speaker.async_postReq("POST", "BeoZone/Zone/ActiveSources", payload)
+            except Exception as e:
+                _LOGGER.error("Slave %s feilet join: %s", slave.name, e)
 
     def leave_experience(self):
         """Leave experience."""
